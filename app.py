@@ -67,19 +67,18 @@ SCENARIOS = {
 }
 
 
-def score(crops: list[str], climate: pd.DataFrame, priority: str) -> dict:
-    """Прозоре правило: кожна оцінка 0-10, береться середнє по культурах."""
+def score(crops: list[str], climate: pd.DataFrame, soil_type: str) -> dict:
+    """Прозоре правило: оцінки 0-10, середнє по культурах сценарію."""
     props = [CROPS[c] for c in crops]
     avg = lambda k: sum(p[k] for p in props) / len(props)
     heat_trend = climate["Днів T>30°C"].iloc[-1] / max(climate["Днів T>30°C"].iloc[0], 1)
-    heat_w = min(heat_trend, 2.0) / 2  # 0..1, чим спекотніше, тим важливіша посухостійкість
-    water = 10 - (avg("water_need") - 1) * 4.5
-    soil = avg("soil") * 0.7 + 3 * sum(p["fixes_n"] for p in props) / len(props) * 1.0
+    heat_w = min(heat_trend, 2.0) / 2
+    water = 10 - (avg("water_need") - 1) * 4.5 + SOIL_WATER_ADJ[soil_type]
+    soil = avg("soil") * 0.7 + 3 * avg("fixes_n")
     climate_score = avg("drought") * (0.5 + 0.5 * heat_w) + (10 - avg("repeat_risk")) * 0.2
-    return {"Вода": round(min(water, 10), 1),
-            "Ґрунт": round(min(soil, 10), 1),
-            "Клім. ризик": round(min(climate_score, 10), 1)}
-
+    clip = lambda x: round(max(0, min(x, 10)), 1)
+    return {"Вода": clip(water), "Ґрунт": clip(soil),
+            "Клім. ризик": clip(climate_score), "Дохід (умовно)": clip(avg("income"))}
 
 # ---------- 3. ІНТЕРФЕЙС ----------
 st.title("FieldShift UA")
