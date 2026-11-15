@@ -18,7 +18,7 @@
 import numpy as np
 import pandas as pd
 
-from data import COL_HEAT, COL_RAIN, COL_WET
+from data import COL_DRY, COL_HEAT, COL_RAIN, COL_WET
 
 # ============================================================
 # 1. ТАБЛИЦІ — ТУТ ПРАВИМО ЦИФРИ
@@ -168,7 +168,7 @@ def _pct(first: float, last: float) -> float:
     return (last - first) / first * 100 if first else 0.0
 
 
-def explain(clim: pd.DataFrame, crops: list[str], soil_type: str) -> str:
+def explain(clim: pd.DataFrame, crops: list[str], soil_type: str, ind: pd.DataFrame | None = None) -> str:
     y0, y1 = clim.index[0], clim.index[-1]
     rain = _pct(clim[COL_RAIN].iloc[0], clim[COL_RAIN].iloc[-1])
     heat0, heat1 = int(clim[COL_HEAT].iloc[0]), int(clim[COL_HEAT].iloc[-1])
@@ -187,6 +187,12 @@ def explain(clim: pd.DataFrame, crops: list[str], soil_type: str) -> str:
         facts.append(f"вологість кореневої зони впала приблизно на {abs(wet):.0f}%")
     elif wet >= 10:
         facts.append(f"вологість кореневої зони зросла приблизно на {wet:.0f}%")
+    if ind is not None and COL_DRY in ind.columns:
+        d0, d1 = int(ind[COL_DRY].iloc[0]), int(ind[COL_DRY].iloc[-1])
+        if d1 > d0:
+            facts.append(f"найдовший сухий період у вегетацію зріс з {d0} до {d1} днів")
+        elif d1 < d0:
+            facts.append(f"найдовший сухий період у вегетацію скоротився з {d0} до {d1} днів")
     climate_txt = ("За даними NASA POWER " + "; ".join(facts) + ".") if facts else \
         f"За даними NASA POWER суттєвих змін клімату між {y0} і {y1} не видно."
 

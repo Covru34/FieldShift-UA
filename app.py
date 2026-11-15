@@ -1,6 +1,6 @@
 """ІНТЕРФЕЙС (точка входу). Запуск: python -m streamlit run app.py
 Власник: Людина 2 · гілка interface
-Тут лише форми, графіки й картки. Дані беруться з data.py, правила з content.py.
+Тут лише форми, карта, графіки й картки. Дані беруться з data.py, правила з content.py.
 """
 from pathlib import Path
 
@@ -9,37 +9,45 @@ import plotly.express as px
 import streamlit as st
 import streamlit.components.v1 as components
 
-from content import (CROPS, CURRENT_CROPS, DISCLAIMER, ECON_COLS, EVIDENCE, METRICS, SOIL_WATER_ADJ,
+from content import (CROPS, CURRENT_CROPS, DISCLAIMER, EVIDENCE, METRICS, SOIL_WATER_ADJ,
                      SOURCES, REQUIREMENT_SOURCES, WEIGHT_PRESETS, econ_table, explain, margins,
                      pick_best, robustness, rotation_checks, scenarios_for, score, total)
-from data import (COL_HEAT, COL_JULY, load_baseline, load_climate, season_summary, vs_baseline,
-                  yearly)
+from data import (COL_DRY, COL_FIRST_FROST, COL_GDD, COL_HEAVY, COL_HOT35, COL_JULY,
+                  COL_LAST_FROST, COL_TOPWET, agro_indicators, load_baseline, load_climate,
+                  season_summary, vs_baseline, yearly)
 
 st.set_page_config(page_title="FieldShift UA", layout="wide")
 
-# Карта Leaflet (без збірки): повертає координати подвійного кліку.
+# Карта Leaflet (без збірки): повертає координати подвійного кліку і має шари NASA GIBS.
 # Файл компонента: components/map_picker/index.html
 _map_picker = components.declare_component(
     "map_picker", path=str(Path(__file__).parent / "components" / "map_picker"))
 _dialog = getattr(st, "dialog", None) or st.experimental_dialog
 
 
-@_dialog("Оберіть місце на карті", width="large")
-def map_dialog() -> None:
-    st.caption("Двічі клікніть по карті, щоб поставити 📍. Тема карти — у правому верхньому куті.")
-    val = _map_picker(lat=st.session_state["lat"], lon=st.session_state["lon"],
-                      theme=st.session_state.get("map_theme", "Звичайна"), zoom=6,
-                      key=f"map_picker_{st.session_state.get('map_n', 0)}", default=None)
+def apply_pick(val) -> None:
+    """Запам'ятати точку, вибрану на карті, і перезапустити сторінку."""
     if val and val.get("id") != st.session_state.get("_last_pick"):
         st.session_state["_last_pick"] = val["id"]
         st.session_state["_pending"] = (float(val["lat"]), float(val["lon"]))
-        st.session_state["map_theme"] = val.get("theme") or "Звичайна"
+        theme = (val.get("theme") or "Звичайна").split(" (")[0]  # без дати в назві шару
+        st.session_state["map_theme"] = theme
         st.session_state["map_n"] = st.session_state.get("map_n", 0) + 1
         st.rerun()
 
 
+@_dialog("Оберіть місце на карті", width="large")
+def map_dialog() -> None:
+    st.caption("Двічі клікніть по карті, щоб поставити 📍. Шари (в тому числі знімки NASA) "
+               "перемикаються у правому верхньому куті.")
+    val = _map_picker(lat=st.session_state["lat"], lon=st.session_state["lon"],
+                      theme=st.session_state.get("map_theme", "Звичайна"), zoom=6,
+                      key=f"map_picker_{st.session_state.get('map_n', 0)}", default=None)
+    apply_pick(val)
+
+
 st.title("FieldShift UA")
-st.caption("Прозорий інструмент підтримки рішень щодо сівозміни · дані NASA POWER · "
+st.caption("Прозорий інструмент підтримки рішень щодо сівозміни · дані NASA POWER і NASA GIBS · "
            "працює без GPS: точку задають координатами")
 
 # ---------------- Введення ----------------
@@ -78,6 +86,7 @@ except Exception as e:
     st.stop()
 clim = yearly(raw)
 season = season_summary(raw)
+ind = agro_indicators(raw)
 try:
     norm, norm_source = load_baseline(lat, lon)
     dev = vs_baseline(clim, norm)
@@ -90,8 +99,9 @@ results = {n: score(c, clim, soil_type) for n, c in scenarios.items()}
 totals = {n: total(results[n], weights) for n in results}
 best = pick_best(results, weights)
 
-tab_res, tab_clim, tab_econ, tab_risk, tab_proof, tab_about = st.tabs(
-    ["Результат", "Клімат", "Економіка", "Надійність і ризики", "Докази й джерела", "Про метод"])
+(tab_res, tab_clim, tab_nasa, tab_econ, tab_risk, tab_proof, tab_about) = st.tabs(
+    ["Результат", "Клімат", "NASA: супутник і агроіндикатори", "Економіка",
+     "Надійність і ризики", "Докази й джерела", "Про метод"])
 
 # ---- Результат ----
 with tab_res:
@@ -106,7 +116,7 @@ with tab_res:
     st.subheader("Чому саме цей варіант")
     st.write(f"**{best}** має найвищу загальну оцінку за вашими пріоритетами "
              f"({', '.join(f'{m}: {w}' for m, w in weights.items())}).")
-    st.write(explain(clim, scenarios[best], soil_type))
+    st.write(explain(clim, scenarios[best], soil_type, ind))
 
     table = pd.DataFrame(results).T
     table.insert(0, "Культури", {n: " → ".join(c) for n, c in scenarios.items()})
@@ -131,6 +141,40 @@ with tab_clim:
     c2.plotly_chart(px.bar(season, y=COL_JULY, title=COL_JULY), use_container_width=True)
     if norm is None:
         st.warning("Норму 1991–2020 завантажити не вдалося: порівняння не показано.")
+
+# ---- NASA: супутник і агроіндикатори ----
+with tab_nasa:
+    st.subheader("Супутниковий знімок NASA над вашою точкою")
+    st.caption("Шари NASA GIBS (супутник Terra, прилад MODIS): справжні кольори й NDVI, "
+               "індекс зеленої біомаси (чим вище, тим густіша рослинність). "
+               "Перемикайте шар у правому верхньому куті. Потрібен інтернет. "
+               "Роздільність близько 250 м, тож це огляд території, а не знімок конкретного поля.")
+    val = _map_picker(lat=lat, lon=lon, theme="NASA: справжні кольори", zoom=9,
+                      key=f"map_sat_{st.session_state.get('map_n', 0)}", default=None)
+    apply_pick(val)
+
+    st.subheader("Агроіндикатори з даних NASA POWER")
+    show = ind.copy()
+    cols_chart = [c for c in (COL_DRY, COL_HOT35, COL_HEAVY, COL_GDD, COL_TOPWET) if c in show.columns]
+    for row in range(0, len(cols_chart), 3):
+        for col, name in zip(st.columns(3), cols_chart[row:row + 3]):
+            col.plotly_chart(px.bar(show, y=name, title=name), use_container_width=True)
+    frost_cols = [c for c in (COL_LAST_FROST, COL_FIRST_FROST) if c in show.columns]
+    if frost_cols:
+        st.markdown("**Заморозки (T мін. < 0 °C)**")
+        st.dataframe(show[frost_cols], use_container_width=True)
+    else:
+        st.info("Заморозки, суму активних температур і вологість поверхні ґрунту показано не буде: "
+                "у даних немає T2M_MIN і GWETTOP. Завантажте оновлений файл "
+                "fallback_dnipro.json (див. README) або підключіться до інтернету.")
+    st.caption("Сухий період: дні поспіль з опадами менше 1 мм у квітні–вересні. "
+               "Сума активних температур: сума добової середньої температури понад 10 °C "
+               "з квітня по жовтень. Заморозок: мінімальна температура нижче 0 °C. "
+               "Усе розраховано з щоденних даних NASA POWER.")
+    st.markdown(
+        "Джерела NASA: [NASA POWER](https://power.larc.nasa.gov/) · "
+        "[NASA GIBS](https://nasa-gibs.github.io/gibs-api-docs/) · "
+        "[NASA Worldview](https://worldview.earthdata.nasa.gov/)")
 
 # ---- Економіка ----
 with tab_econ:
@@ -185,6 +229,14 @@ with tab_about:
         "і ризик повторного вирощування.\n"
         "- **Дохід (умовно)**: демо-оцінка; реальну маржу дивіться на вкладці «Економіка».\n"
         "- **Загальна оцінка** — середнє зважене за вашими пріоритетами."
+    )
+    st.subheader("З яких даних NASA складається аналіз")
+    st.markdown(
+        "- **NASA POWER**: щоденні T2M_MAX, T2M_MIN, PRECTOTCORR, GWETROOT, GWETTOP "
+        "(2021–2025), норма 1991–2020.\n"
+        "- **NASA GIBS**: знімки Terra/MODIS (справжні кольори й NDVI) на карті.\n"
+        "- Агроіндикатори (сухий період, спека понад 35 °C, злива, сума активних температур, "
+        "заморозки) розраховано з даних POWER."
     )
     st.subheader("З чого виведено вимоги до інструмента")
     for text, url in REQUIREMENT_SOURCES:
