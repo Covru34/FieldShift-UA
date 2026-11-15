@@ -1,16 +1,3 @@
-"""ДАНІ NASA POWER.
-Власник: Людина 1 · гілка nasa-data
-Редагувати можна лише цей файл. Інші файли імпортують звідси функції й назви колонок —
-їх НЕ перейменовувати без домовленості з командою.
-
-ЩО ВІДДАЄ ЦЕЙ ФАЙЛ (контракт):
-    load_climate(lat, lon)      -> (daily: DataFrame, source: str)      щоденні дані 2021–2025
-    yearly(daily)               -> DataFrame, індекс = роки, колонки COL_RAIN, COL_HEAT, COL_WET
-    load_baseline(lat, lon)     -> (norm: Series, source: str)          середнє за 1991–2020, індекс COL_*
-    vs_baseline(clim, norm)     -> DataFrame                            відхилення від норми, %
-    season_summary(daily)       -> DataFrame                            квітень–вересень + липнева спека
-    agro_indicators(daily)      -> DataFrame                            сухі періоди, GDD, заморозки, злива
-"""
 import json
 from pathlib import Path
 
@@ -20,43 +7,36 @@ import streamlit as st
 
 POWER_URL = "https://power.larc.nasa.gov/api/temporal/daily/point"
 HERE = Path(__file__).parent
-FALLBACK = HERE / "fallback_dnipro.json"                       # 2021–2025
-FALLBACK_BASELINE = HERE / "fallback_baseline_dnipro.json"     # 1991–2020
+FALLBACK = HERE / "fallback_dnipro.json"
+FALLBACK_BASELINE = HERE / "fallback_baseline_dnipro.json"
 START, END = "20210101", "20251231"
 BASE_START, BASE_END = "19910101", "20201231"
 
-# Основні показники NASA POWER (працює весь застосунок) і додаткові (заморозки, GDD, поверхня ґрунту).
-# Якщо додаткові недоступні, застосунок працює на основних.
 PARAMS_CORE = "T2M_MAX,PRECTOTCORR,GWETROOT"
 PARAMS_EXT = PARAMS_CORE + ",T2M_MIN,GWETTOP"
 
-# Назви колонок спільні для всіх файлів
-COL_RAIN = "Опади, мм"
-COL_HEAT = "Днів T>30°C"
-COL_WET = "Вологість кореня"
-# Колонки сезону вегетації (квітень–вересень)
-COL_RAIN_S = "Опади вегетації, мм"
-COL_HEAT_S = "Днів T>30°C у вегетацію"
-COL_WET_S = "Вологість кореня у вегетацію"
-COL_JULY = "Днів T>30°C у липні"
-# Агроіндикатори
-COL_DRY = "Найдовший сухий період, днів"
-COL_HOT35 = "Днів T>35°C"
-COL_HEAVY = "Днів з опадами >10 мм"
-COL_GDD = "Сума активних температур >10°C, апр–жов"
-COL_LAST_FROST = "Останній весняний заморозок"
-COL_FIRST_FROST = "Перший осінній заморозок"
-COL_TOPWET = "Вологість поверхні ґрунту, кві–трав"
+COL_RAIN = "Precipitation, mm"
+COL_HEAT = "Days T>30°C"
+COL_WET = "Root zone wetness"
+COL_RAIN_S = "Growing season precipitation, mm"
+COL_HEAT_S = "Days T>30°C in growing season"
+COL_WET_S = "Root zone wetness in growing season"
+COL_JULY = "Days T>30°C in July"
+COL_DRY = "Longest dry spell, days"
+COL_HOT35 = "Days T>35°C"
+COL_HEAVY = "Days with precipitation >10 mm"
+COL_GDD = "Growing degree days >10°C, Apr–Oct"
+COL_LAST_FROST = "Last spring frost"
+COL_FIRST_FROST = "First autumn frost"
+COL_TOPWET = "Topsoil wetness, Apr–May"
 
-GROWING_MONTHS = range(4, 10)  # квітень..вересень
+GROWING_MONTHS = range(4, 10)
 
 
 def _get_power(lat: float, lon: float, start: str, end: str, fallback: Path,
                label: str, extended: bool = False) -> tuple[pd.DataFrame, str]:
-    """Запит до NASA POWER. Спершу з додатковими показниками, потім з основними,
-    а без інтернету береться збережений файл."""
     tries = [PARAMS_EXT, PARAMS_CORE] if extended else [PARAMS_CORE]
-    raw, source = None, f"NASA POWER, {label} (онлайн)"
+    raw, source = None, f"NASA POWER, {label} (online)"
     for params_str in tries:
         params = {
             "parameters": params_str,
@@ -77,24 +57,22 @@ def _get_power(lat: float, lon: float, start: str, end: str, fallback: Path,
     if raw is None:
         if not fallback.exists():
             raise RuntimeError(
-                f"Немає інтернету, а збереженого файлу {fallback.name} поруч з app.py теж немає."
+                f"No internet connection, and the saved file {fallback.name} is not next to app.py either."
             )
         raw = json.loads(fallback.read_text())
-        source = f"NASA POWER, {label} (збережена копія для Дніпра, без інтернету)"
+        source = f"NASA POWER, {label} (saved copy for Dnipro, offline)"
 
     df = pd.DataFrame(raw["properties"]["parameter"])
     df.index = pd.to_datetime(df.index, format="%Y%m%d")
     return df.replace(-999, float("nan")).astype(float), source
 
 
-@st.cache_data(show_spinner="Завантажую дані NASA POWER…")
+@st.cache_data(show_spinner="Loading NASA POWER data…")
 def load_climate(lat: float, lon: float) -> tuple[pd.DataFrame, str]:
-    """Щоденні дані 2021–2025 для точки."""
     return _get_power(lat, lon, START, END, FALLBACK, "2021–2025", extended=True)
 
 
 def yearly(df: pd.DataFrame) -> pd.DataFrame:
-    """Річні підсумки: сума опадів, дні спеки, середня вологість кореня."""
     g = df.groupby(df.index.year)
     return pd.DataFrame({
         COL_RAIN: g["PRECTOTCORR"].sum(),
@@ -103,18 +81,13 @@ def yearly(df: pd.DataFrame) -> pd.DataFrame:
     })
 
 
-# ============================================================
-# НОРМА 1991–2020
-# ============================================================
-@st.cache_data(show_spinner="Завантажую кліматичну норму 1991–2020…")
+@st.cache_data(show_spinner="Loading 1991–2020 climate normal…")
 def load_baseline(lat: float, lon: float) -> tuple[pd.Series, str]:
-    """Середнє річне за 1991–2020. Повертає Series з індексом COL_RAIN, COL_HEAT, COL_WET."""
-    raw, source = _get_power(lat, lon, BASE_START, BASE_END, FALLBACK_BASELINE, "норма 1991–2020")
+    raw, source = _get_power(lat, lon, BASE_START, BASE_END, FALLBACK_BASELINE, "1991–2020 normal")
     return yearly(raw).mean().round(2), source
 
 
 def vs_baseline(clim: pd.DataFrame, norm: pd.Series) -> pd.DataFrame:
-    """Відхилення кожного року від норми у відсотках (+ більше за норму, − менше)."""
     out = pd.DataFrame(index=clim.index)
     for col in (COL_RAIN, COL_HEAT, COL_WET):
         base = norm[col]
@@ -122,11 +95,7 @@ def vs_baseline(clim: pd.DataFrame, norm: pd.Series) -> pd.DataFrame:
     return out
 
 
-# ============================================================
-# СЕЗОН ВЕГЕТАЦІЇ І ЛИПНЕВА СПЕКА
-# ============================================================
 def season_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """Підсумки квітня–вересня по роках і кількість днів T>30°C у липні."""
     season = df[df.index.month.isin(GROWING_MONTHS)]
     g = season.groupby(season.index.year)
     july = df[df.index.month == 7]
@@ -139,9 +108,6 @@ def season_summary(df: pd.DataFrame) -> pd.DataFrame:
     })
 
 
-# ============================================================
-# АГРОІНДИКАТОРИ з тих самих даних NASA POWER
-# ============================================================
 def _max_run(mask) -> int:
     best = cur = 0
     for v in mask:
@@ -151,8 +117,6 @@ def _max_run(mask) -> int:
 
 
 def agro_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Показники, зрозумілі фермеру. Колонки, для яких бракує даних, пропускаються
-    (заморозки й GDD потребують T2M_MIN, поверхня ґрунту — GWETTOP)."""
     out = {}
     years = sorted(set(df.index.year))
     season = df[df.index.month.isin(GROWING_MONTHS)]
@@ -171,8 +135,8 @@ def agro_indicators(df: pd.DataFrame) -> pd.DataFrame:
             gdd[y] = round(float((tmean - 10).clip(lower=0).sum()), 0)
             spring = d[(d.index.month <= 6) & (d["T2M_MIN"] < 0)]
             autumn = d[(d.index.month >= 8) & (d["T2M_MIN"] < 0)]
-            last_f[y] = spring.index.max().strftime("%d.%m") if len(spring) else "немає"
-            first_f[y] = autumn.index.min().strftime("%d.%m") if len(autumn) else "немає"
+            last_f[y] = spring.index.max().strftime("%d.%m") if len(spring) else "none"
+            first_f[y] = autumn.index.min().strftime("%d.%m") if len(autumn) else "none"
         out[COL_GDD] = gdd
         out[COL_LAST_FROST] = last_f
         out[COL_FIRST_FROST] = first_f

@@ -1,7 +1,3 @@
-"""ІНТЕРФЕЙС (точка входу). Запуск: python -m streamlit run app.py
-Власник: Людина 2 · гілка interface
-Тут лише форми, карта, графіки й картки. Дані беруться з data.py, правила з content.py.
-"""
 from pathlib import Path
 
 import pandas as pd
@@ -18,54 +14,49 @@ from data import (COL_DRY, COL_FIRST_FROST, COL_GDD, COL_HEAVY, COL_HOT35, COL_J
 
 st.set_page_config(page_title="FieldShift UA", layout="wide")
 
-# Карта Leaflet (без збірки): повертає координати подвійного кліку і має шари NASA GIBS.
-# Файл компонента: components/map_picker/index.html
 _map_picker = components.declare_component(
     "map_picker", path=str(Path(__file__).parent / "components" / "map_picker"))
 _dialog = getattr(st, "dialog", None) or st.experimental_dialog
 
 
 def apply_pick(val) -> None:
-    """Запам'ятати точку, вибрану на карті, і перезапустити сторінку."""
     if val and val.get("id") != st.session_state.get("_last_pick"):
         st.session_state["_last_pick"] = val["id"]
         st.session_state["_pending"] = (float(val["lat"]), float(val["lon"]))
-        theme = (val.get("theme") or "Звичайна").split(" (")[0]  # без дати в назві шару
+        theme = (val.get("theme") or "Standard").split(" (")[0]
         st.session_state["map_theme"] = theme
         st.session_state["map_n"] = st.session_state.get("map_n", 0) + 1
         st.rerun()
 
 
-@_dialog("Оберіть місце на карті", width="large")
+@_dialog("Choose a location on the map", width="large")
 def map_dialog() -> None:
-    st.caption("Двічі клікніть по карті, щоб поставити 📍. Шари (в тому числі знімки NASA) "
-               "перемикаються у правому верхньому куті.")
+    st.caption("Double-click the map to drop a 📍. Layers (including NASA imagery) "
+               "can be switched in the top right corner.")
     val = _map_picker(lat=st.session_state["lat"], lon=st.session_state["lon"],
-                      theme=st.session_state.get("map_theme", "Звичайна"), zoom=6,
+                      theme=st.session_state.get("map_theme", "Standard"), zoom=6,
                       key=f"map_picker_{st.session_state.get('map_n', 0)}", default=None)
     apply_pick(val)
 
 
 st.title("FieldShift UA")
-st.caption("Прозорий інструмент підтримки рішень щодо сівозміни · дані NASA POWER і NASA GIBS · "
-           "працює без GPS: точку задають координатами")
+st.caption("A transparent decision-support tool for crop rotation · NASA POWER and NASA GIBS data · "
+           "works without GPS: the location is set by coordinates")
 
-# ---------------- Введення ----------------
-# координати з карти застосовуємо до віджетів до їх створення
 st.session_state.setdefault("lat", 48.52)
 st.session_state.setdefault("lon", 35.05)
 if "_pending" in st.session_state:
     st.session_state["lat"], st.session_state["lon"] = st.session_state.pop("_pending")
 
 with st.sidebar:
-    st.header("Ваше поле")
-    pick_map = st.button("📍 Обрати місце на карті")
-    lat = st.number_input("Широта", format="%.4f", key="lat")
-    lon = st.number_input("Довгота", format="%.4f", key="lon")
-    soil_type = st.selectbox("Тип ґрунту", list(SOIL_WATER_ADJ))
-    current = st.selectbox("Поточна культура", CURRENT_CROPS)
-    preset = st.radio("Головний пріоритет", list(WEIGHT_PRESETS))
-    with st.expander("Налаштувати важливість критеріїв (0–5)"):
+    st.header("Your field")
+    pick_map = st.button("📍 Choose location on map")
+    lat = st.number_input("Latitude", format="%.4f", key="lat")
+    lon = st.number_input("Longitude", format="%.4f", key="lon")
+    soil_type = st.selectbox("Soil type", list(SOIL_WATER_ADJ))
+    current = st.selectbox("Current crop", CURRENT_CROPS)
+    preset = st.radio("Main priority", list(WEIGHT_PRESETS))
+    with st.expander("Adjust criteria importance (0–5)"):
         weights = {m: st.slider(m, 0, 5, WEIGHT_PRESETS[preset][m], key=f"w_{m}_{preset}")
                    for m in METRICS}
     if st.button("Analyze", type="primary"):
@@ -75,14 +66,13 @@ if pick_map:
     map_dialog()
 
 if not st.session_state.get("ready"):
-    st.info("Оберіть точку, ґрунт і пріоритет, потім натисніть Analyze.")
+    st.info("Choose a location, soil type and priority, then click Analyze.")
     st.stop()
 
-# ---------------- Дані ----------------
 try:
     raw, source = load_climate(lat, lon)
 except Exception as e:
-    st.error(f"Не вдалося отримати дані: {e}")
+    st.error(f"Failed to load data: {e}")
     st.stop()
 clim = yearly(raw)
 season = season_summary(raw)
@@ -93,67 +83,63 @@ try:
 except Exception:
     norm, dev = None, None
 
-# ---------------- Розрахунок ----------------
 scenarios = scenarios_for(current)
 results = {n: score(c, clim, soil_type) for n, c in scenarios.items()}
 totals = {n: total(results[n], weights) for n in results}
 best = pick_best(results, weights)
 
 (tab_res, tab_clim, tab_nasa, tab_econ, tab_risk, tab_proof, tab_about) = st.tabs(
-    ["Результат", "Клімат", "NASA: супутник і агроіндикатори", "Економіка",
-     "Надійність і ризики", "Докази й джерела", "Про метод"])
+    ["Result", "Climate", "NASA: satellite and agro indicators", "Economics",
+     "Reliability and risks", "Evidence and sources", "About the method"])
 
-# ---- Результат ----
 with tab_res:
-    st.subheader("Три сценарії на наступні 3 сезони")
+    st.subheader("Three scenarios for the next 3 seasons")
     for col, (name, crops) in zip(st.columns(3), scenarios.items()):
         with col.container(border=True):
             st.markdown(f"### {name}" + ("  ✅" if name == best else ""))
             st.caption(" → ".join(crops))
-            st.metric("Загальна оцінка", f"{totals[name]} / 10")
+            st.metric("Overall score", f"{totals[name]} / 10")
             for k, v in results[name].items():
                 st.progress(v / 10, text=f"{k}: {v}")
-    st.subheader("Чому саме цей варіант")
-    st.write(f"**{best}** має найвищу загальну оцінку за вашими пріоритетами "
+    st.subheader("Why this option")
+    st.write(f"**{best}** has the highest overall score for your priorities "
              f"({', '.join(f'{m}: {w}' for m, w in weights.items())}).")
     st.write(explain(clim, scenarios[best], soil_type, ind))
 
     table = pd.DataFrame(results).T
-    table.insert(0, "Культури", {n: " → ".join(c) for n, c in scenarios.items()})
-    table["Загальна оцінка"] = pd.Series(totals)
-    st.download_button("Завантажити результат (CSV)", table.to_csv().encode("utf-8-sig"),
+    table.insert(0, "Crops", {n: " → ".join(c) for n, c in scenarios.items()})
+    table["Overall score"] = pd.Series(totals)
+    st.download_button("Download result (CSV)", table.to_csv().encode("utf-8-sig"),
                        "fieldshift_result.csv", "text/csv")
 
-# ---- Клімат ----
 with tab_clim:
-    st.caption(f"Джерело: {source}" + (f" · норма: {norm_source}" if norm is not None else ""))
-    st.subheader(f"Клімат вашої точки, {clim.index[0]}–{clim.index[-1]}")
+    st.caption(f"Source: {source}" + (f" · normal: {norm_source}" if norm is not None else ""))
+    st.subheader(f"Climate at your location, {clim.index[0]}–{clim.index[-1]}")
     for col, name in zip(st.columns(3), clim.columns):
         fig = px.bar(clim, y=name, title=name)
         if norm is not None:
-            fig.add_hline(y=float(norm[name]), line_dash="dash", annotation_text="норма 1991–2020")
+            fig.add_hline(y=float(norm[name]), line_dash="dash", annotation_text="1991–2020 normal")
         col.plotly_chart(fig, use_container_width=True)
         if dev is not None:
-            col.caption(f"{clim.index[-1]}: {dev[name].iloc[-1]:+.0f}% до норми")
-    st.subheader("Сезон вегетації (квітень–вересень) і спека в липні")
+            col.caption(f"{clim.index[-1]}: {dev[name].iloc[-1]:+.0f}% vs normal")
+    st.subheader("Growing season (April–September) and July heat")
     c1, c2 = st.columns(2)
     c1.plotly_chart(px.bar(season, y=season.columns[0], title=season.columns[0]), use_container_width=True)
     c2.plotly_chart(px.bar(season, y=COL_JULY, title=COL_JULY), use_container_width=True)
     if norm is None:
-        st.warning("Норму 1991–2020 завантажити не вдалося: порівняння не показано.")
+        st.warning("Could not load the 1991–2020 normal: comparison is not shown.")
 
-# ---- NASA: супутник і агроіндикатори ----
 with tab_nasa:
-    st.subheader("Супутниковий знімок NASA над вашою точкою")
-    st.caption("Шари NASA GIBS (супутник Terra, прилад MODIS): справжні кольори й NDVI, "
-               "індекс зеленої біомаси (чим вище, тим густіша рослинність). "
-               "Перемикайте шар у правому верхньому куті. Потрібен інтернет. "
-               "Роздільність близько 250 м, тож це огляд території, а не знімок конкретного поля.")
-    val = _map_picker(lat=lat, lon=lon, theme="NASA: справжні кольори", zoom=9,
+    st.subheader("NASA satellite image over your location")
+    st.caption("NASA GIBS layers (Terra satellite, MODIS instrument): true color and NDVI, "
+               "the green biomass index (the higher, the denser the vegetation). "
+               "Switch the layer in the top right corner. Internet is required. "
+               "Resolution is about 250 m, so this is an overview of the area, not an image of a specific field.")
+    val = _map_picker(lat=lat, lon=lon, theme="NASA: true color", zoom=9,
                       key=f"map_sat_{st.session_state.get('map_n', 0)}", default=None)
     apply_pick(val)
 
-    st.subheader("Агроіндикатори з даних NASA POWER")
+    st.subheader("Agro indicators from NASA POWER data")
     show = ind.copy()
     cols_chart = [c for c in (COL_DRY, COL_HOT35, COL_HEAVY, COL_GDD, COL_TOPWET) if c in show.columns]
     for row in range(0, len(cols_chart), 3):
@@ -161,84 +147,80 @@ with tab_nasa:
             col.plotly_chart(px.bar(show, y=name, title=name), use_container_width=True)
     frost_cols = [c for c in (COL_LAST_FROST, COL_FIRST_FROST) if c in show.columns]
     if frost_cols:
-        st.markdown("**Заморозки (T мін. < 0 °C)**")
+        st.markdown("**Frosts (T min < 0 °C)**")
         st.dataframe(show[frost_cols], use_container_width=True)
     else:
-        st.info("Заморозки, суму активних температур і вологість поверхні ґрунту показано не буде: "
-                "у даних немає T2M_MIN і GWETTOP. Завантажте оновлений файл "
-                "fallback_dnipro.json (див. README) або підключіться до інтернету.")
-    st.caption("Сухий період: дні поспіль з опадами менше 1 мм у квітні–вересні. "
-               "Сума активних температур: сума добової середньої температури понад 10 °C "
-               "з квітня по жовтень. Заморозок: мінімальна температура нижче 0 °C. "
-               "Усе розраховано з щоденних даних NASA POWER.")
+        st.info("Frosts, growing degree days and topsoil wetness will not be shown: "
+                "the data has no T2M_MIN and GWETTOP. Download the updated file "
+                "fallback_dnipro.json (see README) or connect to the internet.")
+    st.caption("Dry spell: consecutive days with precipitation below 1 mm in April–September. "
+               "Growing degree days: the sum of daily mean temperature above 10 °C "
+               "from April to October. Frost: minimum temperature below 0 °C. "
+               "Everything is calculated from daily NASA POWER data.")
     st.markdown(
-        "Джерела NASA: [NASA POWER](https://power.larc.nasa.gov/) · "
+        "NASA sources: [NASA POWER](https://power.larc.nasa.gov/) · "
         "[NASA GIBS](https://nasa-gibs.github.io/gibs-api-docs/) · "
         "[NASA Worldview](https://worldview.earthdata.nasa.gov/)")
 
-# ---- Економіка ----
 with tab_econ:
-    st.subheader("Орієнтовна маржа сівозміни")
-    st.warning("Значення в таблиці є прикладами-заповнювачами, а не ринковими даними. "
-               "Введіть власні: урожайність, ціну продажу й витрати вашого господарства.")
+    st.subheader("Approximate rotation margin")
+    st.warning("The values in the table are placeholder examples, not market data. "
+               "Enter your own: yield, selling price and costs of your farm.")
     econ = st.data_editor(econ_table(), key="econ", use_container_width=True)
     mar = margins(scenarios, econ)
-    st.plotly_chart(px.bar(x=list(mar), y=list(mar.values()), labels={"x": "", "y": "грн/га на рік"},
-                           title="Середня валова маржа за 3 сезони, грн/га на рік"),
+    st.plotly_chart(px.bar(x=list(mar), y=list(mar.values()), labels={"x": "", "y": "UAH/ha per year"},
+                           title="Average gross margin over 3 seasons, UAH/ha per year"),
                     use_container_width=True)
-    st.caption("Маржа = урожайність × ціна − витрати, середнє по культурах сценарію. "
-               "Це не враховує ризик посухи: дивіться вкладку «Надійність і ризики».")
+    st.caption("Margin = yield × price − costs, averaged over the crops in the scenario. "
+               "It does not account for drought risk: see the “Reliability and risks” tab.")
 
-# ---- Надійність і ризики ----
 with tab_risk:
-    st.subheader("Наскільки стійкий висновок")
+    st.subheader("How robust is the conclusion")
     rob = robustness(results, weights)
     st.plotly_chart(px.bar(x=list(rob), y=list(rob.values()),
-                           labels={"x": "", "y": "% випадків як найкращий"},
-                           title="Якщо кожна оцінка помилена на ±1 бал"), use_container_width=True)
-    st.caption("Ми 500 разів випадково змінюємо кожну оцінку на ±1 бал і рахуємо, "
-               "який сценарій виходить найкращим. Висока частка означає стійкий висновок.")
-    st.subheader("Орієнтири за вимогами ЄС до сівозмін і покриття ґрунту")
+                           labels={"x": "", "y": "% of cases ranked best"},
+                           title="If each score is off by ±1 point"), use_container_width=True)
+    st.caption("We randomly shift each score by ±1 point 500 times and count "
+               "which scenario comes out best. A high share means a robust conclusion.")
+    st.subheader("Benchmarks based on EU crop rotation and soil cover requirements")
     for col, (name, crops) in zip(st.columns(3), scenarios.items()):
         with col.container(border=True):
             st.markdown(f"**{name}**")
             for ok, text in rotation_checks(crops):
                 st.write(("✅ " if ok else "⚠️ ") + text)
-    st.caption("Це орієнтири за логікою GAEC 6–7, а не юридична перевірка відповідності.")
+    st.caption("These are benchmarks following the logic of GAEC 6–7, not a legal compliance check.")
 
-# ---- Докази ----
 with tab_proof:
-    st.subheader("Властивості культур і джерела")
+    st.subheader("Crop properties and sources")
     crops_shown = sorted({c for cs in scenarios.values() for c in cs}, key=list(CROPS).index)
     for c in crops_shown:
         with st.expander(c):
-            st.write(pd.DataFrame([CROPS[c]]).rename(index={0: "оцінка"}).T)
+            st.write(pd.DataFrame([CROPS[c]]).rename(index={0: "score"}).T)
             for what, value, src in EVIDENCE.get(c, []):
                 st.markdown(f"- {what}: **{value}** ([{src}]({SOURCES[src]}))")
             if c not in EVIDENCE:
-                st.caption("Для цієї культури джерела ще не додано (експертна оцінка).")
-    st.caption("Цифри без посилання є експертними оцінками і потребують перевірки агрономом.")
+                st.caption("No sources have been added for this crop yet (expert estimate).")
+    st.caption("Figures without a link are expert estimates and need to be verified by an agronomist.")
 
-# ---- Про метод ----
 with tab_about:
-    st.subheader("Як рахуються оцінки")
+    st.subheader("How the scores are calculated")
     st.markdown(
-        "- **Вода**: потреба культур у воді за сезон (FAO), з поправкою на тип ґрунту.\n"
-        "- **Ґрунт**: користь культур для ґрунту плюс бонус за фіксацію азоту.\n"
-        "- **Клімат. ризик**: посухостійкість (важливіша, якщо зростає кількість днів спеки) "
-        "і ризик повторного вирощування.\n"
-        "- **Дохід (умовно)**: демо-оцінка; реальну маржу дивіться на вкладці «Економіка».\n"
-        "- **Загальна оцінка** — середнє зважене за вашими пріоритетами."
+        "- **Water**: crop water requirement per season (FAO), adjusted for soil type.\n"
+        "- **Soil**: benefit of the crops to the soil plus a bonus for nitrogen fixation.\n"
+        "- **Climate risk**: drought tolerance (more important if the number of hot days grows) "
+        "and the risk of growing the same crop repeatedly.\n"
+        "- **Income (est.)**: a demo estimate; see the real margin on the “Economics” tab.\n"
+        "- **Overall score** is the average weighted by your priorities."
     )
-    st.subheader("З яких даних NASA складається аналіз")
+    st.subheader("Which NASA data the analysis is based on")
     st.markdown(
-        "- **NASA POWER**: щоденні T2M_MAX, T2M_MIN, PRECTOTCORR, GWETROOT, GWETTOP "
-        "(2021–2025), норма 1991–2020.\n"
-        "- **NASA GIBS**: знімки Terra/MODIS (справжні кольори й NDVI) на карті.\n"
-        "- Агроіндикатори (сухий період, спека понад 35 °C, злива, сума активних температур, "
-        "заморозки) розраховано з даних POWER."
+        "- **NASA POWER**: daily T2M_MAX, T2M_MIN, PRECTOTCORR, GWETROOT, GWETTOP "
+        "(2021–2025), 1991–2020 normal.\n"
+        "- **NASA GIBS**: Terra/MODIS imagery (true color and NDVI) on the map.\n"
+        "- Agro indicators (dry spell, heat above 35 °C, heavy rain, growing degree days, "
+        "frosts) are calculated from POWER data."
     )
-    st.subheader("З чого виведено вимоги до інструмента")
+    st.subheader("Where the tool's requirements come from")
     for text, url in REQUIREMENT_SOURCES:
         st.markdown(f"- [{text}]({url})")
     st.info(DISCLAIMER)
