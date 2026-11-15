@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  html, body { margin: 0; height: 100%; font-family: sans-serif; }
+  #map { height: 100vh; width: 100%; border-radius: 8px; }
+  .pin { font-size: 32px; line-height: 32px; filter: drop-shadow(0 2px 2px rgba(0,0,0,.45)); }
+  #hint { position: absolute; left: 10px; bottom: 22px; z-index: 1000; background: rgba(255,255,255,.92);
+          color: #222; padding: 4px 9px; border-radius: 6px; font-size: 12px; pointer-events: none; }
+  #fail { padding: 20px; color: #b00; }
+  .leaflet-control-layers { font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="hint">Подвійний клік — поставити позначку</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  // Мінімальний протокол Streamlit-компонента (без npm і збірки)
+  function send(type, extra) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
+  }
+
+  var map = null, marker = null, currentTheme = "Звичайна";
+
+  function init(args) {
+    if (map) return;
+    if (typeof L === "undefined") {
+      document.getElementById("map").innerHTML =
+        '<div id="fail">Не вдалося завантажити карту. Перевірте інтернет-з’єднання.</div>';
+      return;
+    }
+    map = L.map("map", { doubleClickZoom: false }).setView([args.lat, args.lon], args.zoom || 6);
+
+    var osm = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+    var carto = osm + ' &copy; <a href="https://carto.com/attributions">CARTO</a>';
+    var bases = {
+      "Звичайна": L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                              { maxZoom: 19, attribution: osm }),
+      "Світла": L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+                            { maxZoom: 19, subdomains: "abcd", attribution: carto }),
+      "Темна": L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+                           { maxZoom: 19, subdomains: "abcd", attribution: carto }),
+      "Рельєф": L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+                            { maxZoom: 17, subdomains: "abc",
+                              attribution: osm + ' &copy; <a href="https://opentopomap.org">OpenTopoMap</a>' })
+    };
+    if (bases[args.theme]) currentTheme = args.theme;
+    bases[currentTheme].addTo(map);
+
+    // перемикач теми — у правому верхньому куті
+    L.control.layers(bases, null, { position: "topright", collapsed: false }).addTo(map);
+    map.on("baselayerchange", function (e) { currentTheme = e.name; });
+
+    marker = L.marker([args.lat, args.lon], {
+      icon: L.divIcon({ className: "", html: '<div class="pin">📍</div>', iconSize: [32, 32], iconAnchor: [16, 32] })
+    }).addTo(map);
+
+    map.on("dblclick", function (e) {
+      var p = e.latlng.wrap();
+      marker.setLatLng(p);
+      send("streamlit:setComponentValue", {
+        value: { lat: +p.lat.toFixed(4), lon: +p.lng.toFixed(4), theme: currentTheme, id: Date.now() },
+        dataType: "json"
+      });
+    });
+    setTimeout(function () { map.invalidateSize(); }, 250);
+  }
+
+  window.addEventListener("message", function (ev) {
+    if (ev.data && ev.data.type === "streamlit:render") init(ev.data.args || {});
+  });
+  send("streamlit:componentReady", { apiVersion: 1 });
+  send("streamlit:setFrameHeight", { height: 480 });
+</script>
+</body>
+</html>

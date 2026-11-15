@@ -2,9 +2,12 @@
 Власник: Людина 2 · гілка interface
 Тут лише форми, графіки й картки. Дані беруться з data.py, правила з content.py.
 """
+from pathlib import Path
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 from content import (CROPS, CURRENT_CROPS, DISCLAIMER, ECON_COLS, EVIDENCE, METRICS, SOIL_WATER_ADJ,
                      SOURCES, REQUIREMENT_SOURCES, WEIGHT_PRESETS, econ_table, explain, margins,
@@ -14,15 +17,43 @@ from data import (COL_HEAT, COL_JULY, load_baseline, load_climate, season_summar
 
 st.set_page_config(page_title="FieldShift UA", layout="wide")
 
+# Карта Leaflet (без збірки): повертає координати подвійного кліку.
+# Файл компонента: components/map_picker/index.html
+_map_picker = components.declare_component(
+    "map_picker", path=str(Path(__file__).parent / "components" / "map_picker"))
+_dialog = getattr(st, "dialog", None) or st.experimental_dialog
+
+
+@_dialog("Оберіть місце на карті", width="large")
+def map_dialog() -> None:
+    st.caption("Двічі клікніть по карті, щоб поставити 📍. Тема карти — у правому верхньому куті.")
+    val = _map_picker(lat=st.session_state["lat"], lon=st.session_state["lon"],
+                      theme=st.session_state.get("map_theme", "Звичайна"), zoom=6,
+                      key=f"map_picker_{st.session_state.get('map_n', 0)}", default=None)
+    if val and val.get("id") != st.session_state.get("_last_pick"):
+        st.session_state["_last_pick"] = val["id"]
+        st.session_state["_pending"] = (float(val["lat"]), float(val["lon"]))
+        st.session_state["map_theme"] = val.get("theme") or "Звичайна"
+        st.session_state["map_n"] = st.session_state.get("map_n", 0) + 1
+        st.rerun()
+
+
 st.title("FieldShift UA")
 st.caption("Прозорий інструмент підтримки рішень щодо сівозміни · дані NASA POWER · "
            "працює без GPS: точку задають координатами")
 
 # ---------------- Введення ----------------
+# координати з карти застосовуємо до віджетів до їх створення
+st.session_state.setdefault("lat", 48.52)
+st.session_state.setdefault("lon", 35.05)
+if "_pending" in st.session_state:
+    st.session_state["lat"], st.session_state["lon"] = st.session_state.pop("_pending")
+
 with st.sidebar:
     st.header("Ваше поле")
-    lat = st.number_input("Широта", value=48.52, format="%.4f")
-    lon = st.number_input("Довгота", value=35.05, format="%.4f")
+    pick_map = st.button("📍 Обрати місце на карті")
+    lat = st.number_input("Широта", format="%.4f", key="lat")
+    lon = st.number_input("Довгота", format="%.4f", key="lon")
     soil_type = st.selectbox("Тип ґрунту", list(SOIL_WATER_ADJ))
     current = st.selectbox("Поточна культура", CURRENT_CROPS)
     preset = st.radio("Головний пріоритет", list(WEIGHT_PRESETS))
@@ -31,6 +62,9 @@ with st.sidebar:
                    for m in METRICS}
     if st.button("Analyze", type="primary"):
         st.session_state["ready"] = True
+
+if pick_map:
+    map_dialog()
 
 if not st.session_state.get("ready"):
     st.info("Оберіть точку, ґрунт і пріоритет, потім натисніть Analyze.")
