@@ -4,41 +4,91 @@ import pandas as pd
 from data import COL_DRY, COL_HEAT, COL_RAIN, COL_WET
 
 CROPS = {
-    "Winter wheat": dict(water_need=2, drought=6, fixes_n=0, soil=5, repeat_risk=4, income=6),
-    "Sunflower":    dict(water_need=3, drought=7, fixes_n=0, soil=3, repeat_risk=9, income=8),
-    "Corn":         dict(water_need=3, drought=3, fixes_n=0, soil=4, repeat_risk=4, income=7),
-    "Soybean":      dict(water_need=2, drought=5, fixes_n=1, soil=8, repeat_risk=6, income=7),
-    "Pea":          dict(water_need=1, drought=6, fixes_n=1, soil=8, repeat_risk=6, income=5),
-    "Sorghum":      dict(water_need=2, drought=9, fixes_n=0, soil=6, repeat_risk=3, income=4),
-    "Cover crop":   dict(water_need=1, drought=6, fixes_n=1, soil=10, repeat_risk=1, income=1),
+    "Winter wheat":  dict(water_need=2, drought=6, fixes_n=0, soil=5, repeat_risk=4, income=6),
+    "Winter barley": dict(water_need=2, drought=7, fixes_n=0, soil=5, repeat_risk=4, income=5),
+    "Spring barley": dict(water_need=1, drought=7, fixes_n=0, soil=5, repeat_risk=4, income=4),
+    "Oats":          dict(water_need=2, drought=5, fixes_n=0, soil=5, repeat_risk=3, income=3),
+    "Rye":           dict(water_need=1, drought=8, fixes_n=0, soil=6, repeat_risk=3, income=3),
+    "Corn":          dict(water_need=3, drought=3, fixes_n=0, soil=4, repeat_risk=4, income=7),
+    "Sorghum":       dict(water_need=2, drought=9, fixes_n=0, soil=6, repeat_risk=3, income=4),
+    "Millet":        dict(water_need=1, drought=9, fixes_n=0, soil=6, repeat_risk=3, income=3),
+    "Buckwheat":     dict(water_need=1, drought=4, fixes_n=0, soil=6, repeat_risk=3, income=5),
+    "Sunflower":     dict(water_need=3, drought=7, fixes_n=0, soil=3, repeat_risk=9, income=8),
+    "Soybean":       dict(water_need=2, drought=5, fixes_n=1, soil=8, repeat_risk=6, income=7),
+    "Pea":           dict(water_need=1, drought=6, fixes_n=1, soil=8, repeat_risk=6, income=5),
+    "Chickpea":      dict(water_need=1, drought=8, fixes_n=1, soil=8, repeat_risk=5, income=6),
+    "Lentil":        dict(water_need=1, drought=7, fixes_n=1, soil=8, repeat_risk=5, income=5),
+    "Rapeseed":      dict(water_need=2, drought=4, fixes_n=0, soil=6, repeat_risk=6, income=8),
+    "Sugar beet":    dict(water_need=3, drought=3, fixes_n=0, soil=4, repeat_risk=7, income=7),
+    "Potato":        dict(water_need=3, drought=3, fixes_n=0, soil=3, repeat_risk=6, income=7),
+    "Alfalfa":       dict(water_need=2, drought=8, fixes_n=1, soil=9, repeat_risk=2, income=3),
+    "Cover crop":    dict(water_need=1, drought=6, fixes_n=1, soil=10, repeat_risk=1, income=1),
 }
 
-SOIL_WATER_ADJ = {"Typical chernozem": 0.0, "Chestnut": -0.5, "Sandy loam": -1.5}
+CROP_FAMILY = {
+    "Winter wheat": "cereals", "Winter barley": "cereals", "Spring barley": "cereals",
+    "Oats": "cereals", "Rye": "cereals", "Corn": "cereals", "Sorghum": "cereals",
+    "Millet": "cereals", "Buckwheat": "knotweeds", "Sunflower": "asters",
+    "Soybean": "legumes", "Pea": "legumes", "Chickpea": "legumes", "Lentil": "legumes",
+    "Alfalfa": "legumes", "Rapeseed": "brassicas", "Sugar beet": "goosefoots",
+    "Potato": "nightshades", "Cover crop": "mixed",
+}
 
-CURRENT_CROPS = ["Winter wheat", "Sunflower", "Corn"]
+SOIL_WATER_ADJ = {
+    "Typical chernozem": 0.0,
+    "Ordinary chernozem": -0.2,
+    "Southern chernozem": -0.4,
+    "Dark chestnut": -0.4,
+    "Chestnut": -0.5,
+    "Gray forest": -0.3,
+    "Sod-podzolic": -0.8,
+    "Meadow": 0.3,
+    "Alluvial": 0.2,
+    "Clay": 0.2,
+    "Loam": 0.0,
+    "Sandy loam": -1.5,
+    "Sandy": -2.0,
+}
 
-BASE_SCENARIOS = {
-    "Current":     ["Winter wheat", "Sunflower", "Corn"],
-    "Soil-first":  ["Winter wheat", "Soybean", "Cover crop"],
-    "Water-first": ["Winter wheat", "Pea", "Sorghum"],
+CURRENT_CROPS = [c for c in CROPS if c != "Cover crop"]
+
+STRATEGIES = {
+    "Conventional": ["Winter wheat", "Sunflower", "Corn", "Rapeseed", "Soybean", "Sugar beet",
+                     "Winter barley", "Potato"],
+    "Soil-first":   ["Pea", "Soybean", "Cover crop", "Alfalfa", "Chickpea", "Lentil",
+                     "Winter wheat", "Rye", "Winter barley", "Buckwheat"],
+    "Water-first":  ["Sorghum", "Chickpea", "Millet", "Rye", "Winter barley", "Spring barley",
+                     "Lentil", "Pea", "Sunflower", "Winter wheat"],
 }
 
 METRICS = ["Water", "Soil", "Climate risk", "Income (est.)"]
 
 WEIGHT_PRESETS = {
-    "Less water":    {"Water": 4, "Soil": 1, "Climate risk": 4, "Income (est.)": 1},
+    "Less water":     {"Water": 4, "Soil": 1, "Climate risk": 4, "Income (est.)": 1},
     "Healthier soil": {"Water": 2, "Soil": 5, "Climate risk": 3, "Income (est.)": 1},
-    "Income":        {"Water": 1, "Soil": 1, "Climate risk": 1, "Income (est.)": 5},
+    "Income":         {"Water": 1, "Soil": 1, "Climate risk": 1, "Income (est.)": 5},
 }
 
 ECON_DEFAULTS = {
-    "Winter wheat": (4.5,  7000, 26000),
-    "Sunflower":    (2.8, 17000, 22000),
-    "Corn":         (7.0,  6500, 34000),
-    "Soybean":      (2.5, 16000, 24000),
-    "Pea":          (3.0, 12000, 18000),
-    "Sorghum":      (4.0,  6000, 20000),
-    "Cover crop":   (0.0,     0,  3000),
+    "Winter wheat":  (4.5,   7000,  26000),
+    "Winter barley": (4.2,   6300,  24000),
+    "Spring barley": (3.5,   6300,  20000),
+    "Oats":          (2.8,   6000,  17000),
+    "Rye":           (3.8,   5500,  19000),
+    "Corn":          (7.0,   6500,  34000),
+    "Sorghum":       (4.0,   6000,  20000),
+    "Millet":        (2.0,   8000,  14000),
+    "Buckwheat":     (1.6,  22000,  17000),
+    "Sunflower":     (2.8,  17000,  22000),
+    "Soybean":       (2.5,  16000,  24000),
+    "Pea":           (3.0,  12000,  18000),
+    "Chickpea":      (1.8,  20000,  20000),
+    "Lentil":        (1.6,  22000,  19000),
+    "Rapeseed":      (3.0,  19000,  30000),
+    "Sugar beet":    (45.0,  1800,  65000),
+    "Potato":        (22.0,  6000, 115000),
+    "Alfalfa":       (7.0,   3500,  14000),
+    "Cover crop":    (0.0,      0,   3000),
 }
 ECON_COLS = ["Yield, t/ha", "Price, UAH/t", "Costs, UAH/ha"]
 
@@ -58,12 +108,19 @@ def margins(scenarios: dict[str, list[str]], econ: pd.DataFrame) -> dict[str, fl
 
 def scenarios_for(current: str) -> dict[str, list[str]]:
     out = {}
-    for name, seq in BASE_SCENARIOS.items():
-        seq = list(seq)
-        for _ in range(len(seq)):
-            if seq[0] != current:
-                break
-            seq = seq[1:] + seq[:1]
+    for name, prefs in STRATEGIES.items():
+        seq, prev = [], current
+        for i in range(3):
+            banned = {CROP_FAMILY[prev]}
+            if i == 2:
+                banned.add(CROP_FAMILY[seq[0]])
+            pick = next((c for c in prefs if c not in seq and CROP_FAMILY[c] not in banned), None)
+            if pick is None:
+                pick = next((c for c in prefs if c not in seq and c != prev), None)
+            if pick is None:
+                pick = next(c for c in CROPS if c not in seq and c != prev)
+            seq.append(pick)
+            prev = pick
         out[name] = seq
     return out
 

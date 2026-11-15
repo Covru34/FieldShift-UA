@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -11,6 +12,7 @@ from content import (CROPS, CURRENT_CROPS, DISCLAIMER, EVIDENCE, METRICS, SOIL_W
 from data import (COL_DRY, COL_FIRST_FROST, COL_GDD, COL_HEAVY, COL_HOT35, COL_JULY,
                   COL_LAST_FROST, COL_TOPWET, agro_indicators, load_baseline, load_climate,
                   season_summary, vs_baseline, yearly)
+from weather import get_forecast
 
 st.set_page_config(page_title="FieldShift UA", layout="wide")
 
@@ -27,6 +29,53 @@ def apply_pick(val) -> None:
         st.session_state["map_theme"] = theme
         st.session_state["map_n"] = st.session_state.get("map_n", 0) + 1
         st.rerun()
+
+
+@st.cache_data(ttl=1800, show_spinner="Loading forecast…")
+def cached_forecast(lat: float, lon: float):
+    return get_forecast(lat, lon)
+
+
+def show_forecast(lat: float, lon: float) -> None:
+    st.subheader("7-day forecast")
+    try:
+        d, fc_source = cached_forecast(round(lat, 3), round(lon, 3))
+    except Exception as e:
+        st.error("Could not get a forecast from any service.\n\n"
+                 f"{e}\n\nCheck your internet connection (or toggle your VPN or change DNS) "
+                 "and click Analyze again.")
+        return
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Rain, next 7 days", f"{d['rain'].sum():.1f} mm")
+    c2.metric("Highest daily max", f"{d['tmax'].max():.0f} °C")
+    c3.metric("Lowest daily min", f"{d['tmin'].min():.0f} °C")
+
+    fig = go.Figure(go.Scatter(
+        x=d["label"], y=d["temp"], mode="lines+markers+text",
+        text=[f"{t:.0f}°" for t in d["temp"]], textposition="top center",
+        line=dict(width=3, shape="spline", color="#ff7a45"),
+        marker=dict(size=8), hoverinfo="skip"))
+
+    for lbl, rain, hum in zip(d["label"], d["rain"], d["humidity"]):
+        if rain >= 0.1:
+            txt = f"🌧<br>{rain:.1f} mm"
+        elif hum >= 85:
+            txt = f"🌧<br>{hum:.0f}%"
+        else:
+            continue
+        fig.add_annotation(x=lbl, y=-0.28, xref="x", yref="paper",
+                           text=txt, showarrow=False, font=dict(size=14))
+
+    lo, hi = d["temp"].min(), d["temp"].max()
+    fig.update_layout(
+        showlegend=False, height=380, margin=dict(l=10, r=10, t=30, b=90),
+        yaxis=dict(visible=False, range=[lo - 3, hi + 3]), xaxis=dict(showgrid=False),
+        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(f"Point: {lat:.3f}, {lon:.3f}. The line is the daily mean temperature, °C. "
+               "🌧 with mm is expected precipitation; 🌧 with % is dry but a very humid atmosphere "
+               f"(humidity ≥ 85%). Source: {fc_source}.")
 
 
 @_dialog("Choose a location on the map", width="large")
@@ -88,8 +137,8 @@ results = {n: score(c, clim, soil_type) for n, c in scenarios.items()}
 totals = {n: total(results[n], weights) for n in results}
 best = pick_best(results, weights)
 
-(tab_res, tab_clim, tab_nasa, tab_econ, tab_risk, tab_proof, tab_about) = st.tabs(
-    ["Result", "Climate", "NASA: satellite and agro indicators", "Economics",
+(tab_res, tab_clim, tab_fc, tab_nasa, tab_econ, tab_risk, tab_proof, tab_about) = st.tabs(
+    ["Result", "Climate", "Forecast", "NASA: satellite and agro indicators", "Economics",
      "Reliability and risks", "Evidence and sources", "About the method"])
 
 with tab_res:
@@ -128,6 +177,9 @@ with tab_clim:
     c2.plotly_chart(px.bar(season, y=COL_JULY, title=COL_JULY), use_container_width=True)
     if norm is None:
         st.warning("Could not load the 1991–2020 normal: comparison is not shown.")
+
+with tab_fc:
+    show_forecast(lat, lon)
 
 with tab_nasa:
     st.subheader("NASA satellite image over your location")
