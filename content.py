@@ -1,14 +1,21 @@
-"""КУЛЬТУРИ, ПРАВИЛА ОЦІНКИ І ТЕКСТ ПОЯСНЕНЬ.
-Власник: Людина 3 · гілка feature/crops-scoring
-Новачку достатньо правити лише розділ 1 (таблиці). Розділи 2–3 — формули й текст,
-їх змінюйте разом із Людиною 2 або через ШІ.
+"""КУЛЬТУРИ, ПРАВИЛА ОЦІНКИ, ЕКОНОМІКА, ДОКАЗИ, ТЕКСТИ.
+Власник: Людина 3 · гілка scoring-explanations
+Новачку достатньо правити лише розділ 1 (таблиці) і розділ 5 (джерела).
+Розділи 2–4 — формули й тексти, їх змінюйте разом із Людиною 2 або через ШІ.
 
 ЩО ВІДДАЄ ЦЕЙ ФАЙЛ (контракт):
-    CROPS, SOIL_WATER_ADJ, CURRENT_CROPS, PRIORITY_KEY, METRICS
-    scenarios_for(current)       -> {назва сценарію: [3 культури]}
-    score(crops, clim, soil)     -> {метрика: 0..10}
-    explain(clim, crops, soil)   -> текст пояснення
+    CROPS, SOIL_WATER_ADJ, CURRENT_CROPS, METRICS, WEIGHT_PRESETS, EVIDENCE, SOURCES, REQUIREMENT_SOURCES
+    scenarios_for(current)             -> {назва сценарію: [3 культури]}
+    score(crops, clim, soil)           -> {метрика: 0..10}
+    total(metrics, weights)            -> одне число 0..10
+    pick_best(results, weights)        -> назва найкращого сценарію
+    robustness(results, weights)       -> {сценарій: % випадків, коли він найкращий}
+    econ_table()                       -> DataFrame (редагується фермером)
+    margins(scenarios, econ)           -> {сценарій: грн/га/рік}
+    rotation_checks(crops)             -> [(ok, текст)]
+    explain(clim, crops, soil)         -> текст пояснення
 """
+import numpy as np
 import pandas as pd
 
 from data import COL_HEAT, COL_RAIN, COL_WET
@@ -41,13 +48,49 @@ BASE_SCENARIOS = {
     "Water-first": ["Озима пшениця", "Горох", "Сорго"],
 }
 
-# Який пріоритет фермера → яка метрика вирішує
-PRIORITY_KEY = {"Менше води": "Вода", "Здоровіший ґрунт": "Ґрунт", "Дохід": "Дохід (умовно)"}
 METRICS = ["Вода", "Ґрунт", "Клім. ризик", "Дохід (умовно)"]
+
+# Пресети ваг 0..5 для пріоритетів фермера (фермер може підкрутити повзунками)
+# «Менше води» враховує і низьке споживання, і посухостійкість, тому клімат-ризик має високу вагу.
+WEIGHT_PRESETS = {
+    "Менше води":       {"Вода": 4, "Ґрунт": 1, "Клім. ризик": 4, "Дохід (умовно)": 1},
+    "Здоровіший ґрунт": {"Вода": 2, "Ґрунт": 5, "Клім. ризик": 3, "Дохід (умовно)": 1},
+    "Дохід":            {"Вода": 1, "Ґрунт": 1, "Клім. ризик": 1, "Дохід (умовно)": 5},
+}
+
+# ============================================================
+# 2. ЕКОНОМІКА. УВАГА: цифри нижче — ПРИКЛАДИ-ЗАПОВНЮВАЧІ, не ринкові дані.
+#    Фермер має ввести свої: урожайність т/га, ціна грн/т, витрати грн/га.
+# ============================================================
+ECON_DEFAULTS = {
+    #                    т/га, грн/т, грн/га
+    "Озима пшениця":     (4.5,  7000, 26000),
+    "Соняшник":          (2.8, 17000, 22000),
+    "Кукурудза":         (7.0,  6500, 34000),
+    "Соя":               (2.5, 16000, 24000),
+    "Горох":             (3.0, 12000, 18000),
+    "Сорго":             (4.0,  6000, 20000),
+    "Покривна культура": (0.0,     0,  3000),
+}
+ECON_COLS = ["Урожайність, т/га", "Ціна, грн/т", "Витрати, грн/га"]
+
+
+def econ_table() -> pd.DataFrame:
+    return pd.DataFrame(ECON_DEFAULTS, index=ECON_COLS).T.astype(float)
+
+
+def margins(scenarios: dict[str, list[str]], econ: pd.DataFrame) -> dict[str, float]:
+    """Середня валова маржа за 3 сезони, грн/га на рік (сума: урожай·ціна − витрати)."""
+    out = {}
+    for name, crops in scenarios.items():
+        vals = [econ.loc[c, ECON_COLS[0]] * econ.loc[c, ECON_COLS[1]] - econ.loc[c, ECON_COLS[2]]
+                for c in crops]
+        out[name] = round(float(np.mean(vals)), 0)
+    return out
 
 
 # ============================================================
-# 2. ФОРМУЛИ ОЦІНКИ
+# 3. ФОРМУЛИ ОЦІНКИ
 # ============================================================
 def scenarios_for(current: str) -> dict[str, list[str]]:
     """Кожен сценарій починається не з тієї культури, що вже росте на полі."""
@@ -76,14 +119,50 @@ def score(crops: list[str], clim: pd.DataFrame, soil_type: str) -> dict:
             "Клім. ризик": clip(climate), "Дохід (умовно)": clip(avg("income"))}
 
 
-def pick_best(results: dict[str, dict], priority: str) -> str:
-    """Переможець за пріоритетом; при рівності вирішує кліматичний ризик."""
-    key = PRIORITY_KEY[priority]
-    return max(results, key=lambda n: (results[n][key], results[n]["Клім. ризик"]))
+def total(metrics: dict, weights: dict) -> float:
+    """Зважена оцінка 0..10. Якщо всі ваги нульові, рахуємо їх рівними."""
+    w = {m: weights.get(m, 0) for m in METRICS}
+    s = sum(w.values()) or len(METRICS)
+    if sum(w.values()) == 0:
+        w = {m: 1 for m in METRICS}
+    return round(sum(w[m] * metrics[m] for m in METRICS) / s, 1)
+
+
+def pick_best(results: dict[str, dict], weights: dict) -> str:
+    """Переможець за зваженою оцінкою; при рівності вирішує кліматичний ризик."""
+    return max(results, key=lambda n: (total(results[n], weights), results[n]["Клім. ризик"]))
+
+
+def robustness(results: dict[str, dict], weights: dict, spread: float = 1.0,
+               n: int = 500, seed: int = 0) -> dict[str, float]:
+    """Наскільки висновок стійкий: n разів змінюємо кожну оцінку на випадкові ±spread балів
+    і рахуємо, у скількох % випадків кожен сценарій виявляється найкращим."""
+    rng = np.random.default_rng(seed)
+    wins = {k: 0 for k in results}
+    w = {m: weights.get(m, 0) for m in METRICS}
+    if sum(w.values()) == 0:
+        w = {m: 1 for m in METRICS}
+    for _ in range(n):
+        tot = {k: sum(w[m] * (v[m] + rng.uniform(-spread, spread)) for m in METRICS)
+               for k, v in results.items()}
+        wins[max(tot, key=tot.get)] += 1
+    return {k: round(v / n * 100, 0) for k, v in wins.items()}
+
+
+def rotation_checks(crops: list[str]) -> list[tuple[bool, str]]:
+    """Орієнтовні перевірки сівозміни за логікою вимог ЄС до сівозмін і покриття ґрунту
+    (GAEC 6–7). Це НЕ юридична перевірка відповідності."""
+    return [
+        (len(set(crops)) >= 3, "Щонайменше 3 різні культури в ротації"),
+        (any(CROPS[c]["fixes_n"] for c in crops), "Є азотфіксуюча (бобова) культура"),
+        ("Покривна культура" in crops, "Є покривна культура для захисту ґрунту"),
+        (not any(a == b for a, b in zip(crops, crops[1:] + crops[:1])),
+         "Немає тієї самої культури двічі поспіль"),
+    ]
 
 
 # ============================================================
-# 3. ТЕКСТ ПОЯСНЕННЯ (складається з реальних цифр)
+# 4. ТЕКСТ ПОЯСНЕННЯ (складається з реальних цифр)
 # ============================================================
 def _pct(first: float, last: float) -> float:
     return (last - first) / first * 100 if first else 0.0
@@ -128,8 +207,55 @@ def explain(clim: pd.DataFrame, crops: list[str], soil_type: str) -> str:
     return f"{climate_txt} {traits_txt}{soil_txt}".strip()
 
 
+# ============================================================
+# 5. ДЖЕРЕЛА Й ДОКАЗИ
+# ============================================================
+SOURCES = {
+    "FAO 1986 (SSWM)": "https://sswm.info/water-nutrient-cycle/water-use/hardwares/conservation-soil-moisture/crop-selection",
+    "FAO, сорго": "https://www.fao.org/land-water/databases-and-software/crop-information/sorghum/fr/",
+    "GRDC, горох": "https://grdc.com.au/resources-and-publications/all-publications/publications/2018/nitrogen-fixation-in-field-pea",
+    "EOS, сівозміна": "https://eos.com/uk/blog/sivozmina/",
+}
+
+# (показник, значення, ключ у SOURCES)
+EVIDENCE = {
+    "Озима пшениця": [("Потреба у воді за сезон", "450–650 мм", "FAO 1986 (SSWM)"),
+                      ("Повернення на те саме поле", "через 1–3 роки", "EOS, сівозміна")],
+    "Соняшник":      [("Потреба у воді за сезон", "600–1000 мм", "FAO 1986 (SSWM)"),
+                      ("Повернення на те саме поле", "через 6–9 років", "EOS, сівозміна")],
+    "Кукурудза":     [("Потреба у воді за сезон", "500–800 мм", "FAO 1986 (SSWM)"),
+                      ("Повернення на те саме поле", "0–5 років", "EOS, сівозміна"),
+                      ("Посухостійкість", "нижча, ніж у сорго", "FAO, сорго")],
+    "Соя":           [("Потреба у воді за сезон", "450–700 мм", "FAO 1986 (SSWM)"),
+                      ("Повернення на те саме поле", "через 3–4 роки", "EOS, сівозміна"),
+                      ("Бобова, попередник для пшениці", "так", "EOS, сівозміна")],
+    "Горох":         [("Потреба у воді за сезон", "350–500 мм", "FAO 1986 (SSWM)"),
+                      ("Азот у стерні й коренях", "71–127 кг/га (залежно від сорту)", "GRDC, горох"),
+                      ("Повернення на те саме поле", "через 3–4 роки", "EOS, сівозміна")],
+    "Сорго":         [("Потреба у воді за сезон", "450–650 мм", "FAO, сорго"),
+                      ("Посухостійкість", "вища, ніж у кукурудзи", "FAO, сорго")],
+}
+
+# Джерела ВИМОГ до інструмента (з чого виведено функції сайту)
+REQUIREMENT_SOURCES = [
+    ("Вимоги фермерів до інструментів підтримки рішень: зручність, економічна ефективність, "
+     "результативність, релевантність користувачу, сумісність із вимогами регуляторів "
+     "(Rose et al., 2016, Agricultural Systems)",
+     "https://ore.exeter.ac.uk/repository/handle/10871/26816"),
+    ("Українські аграрії: нестача кваліфікованих кадрів (72%), вартість технологій, "
+     "втрата GPS через РЕБ (89%) — опитування Digital Agro Ukraine 2026",
+     "https://itukraine.org.ua/en/technology-exists-signal-doesn-t-89-of-ukrainian-farmers-name-ew-as-the-top-challenge-to-precision-farming/"),
+    ("Цифрові технології в зерновому секторі України: супутниковий моніторинг, NDVI, "
+     "потреба в оптимізації витрат (FAO Agritech Observatory)",
+     "https://agritechobservatory.review.fao.org/en/digital-technologies-in-the-grain-sector-of-ukraine"),
+    ("Умовність ЄС: GAEC 7 (сівозміна) і GAEC 6 (покриття ґрунту) — орієнтир для сівозмін в Україні на шляху до ЄС",
+     "https://agriculture.ec.europa.eu/common-agricultural-policy/income-support/conditionality_en"),
+]
+
 DISCLAIMER = (
-    "Прогалини: немає польових даних про вологість ґрунту, цін на зерно та історії культур. "
-    "«Дохід» — умовна демо-оцінка. Властивості культур задані як експертні оцінки "
-    "(FAO, відкриті аграрні джерела). Результат є прототипом для обговорення з локальним агрономом."
+    "Прогалини: немає польових даних про вологість ґрунту, фактичних цін і витрат господарства, "
+    "супутникових індексів рослинності та прогнозу погоди. «Дохід (умовно)» і економічні значення "
+    "за замовчуванням є прикладами, які фермер має замінити своїми. Властивості культур задані як "
+    "експертні оцінки (FAO, відкриті аграрні джерела). Результат є прототипом для обговорення "
+    "з локальним агрономом."
 )
